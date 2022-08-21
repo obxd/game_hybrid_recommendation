@@ -1,0 +1,14 @@
+{% extends "header.html" %}
+
+{% block content %}
+<h1>Select user</h1>
+
+  <p>{{msg}}
+  <form action="/select_user" method="GET">
+    <input type="text" name="user"/>
+    <input type="submit" value="Select" />
+  </form>
+
+
+{% endblock %}
+

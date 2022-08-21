@@ -1,0 +1,23 @@
+{% extends "header.html" %}
+
+{% block content %}
+{% if user == 0 %}
+<h1>Hello guest </h1>
+{% else %}
+<h1>Hello user {{user}} </h1>
+{% endif %}
+
+
+<h2>{{ game.title }} </h2>
+<img src={{ game.image_url }} alt="image not found">
+<p> {{game.description |safe}}
+<br>
+<p> Enter the amount of time you want to play this game in hours: 
+<form action="/add_time" method="POST">
+  <input type="hidden" name="game_id" value={{game.id}}>
+  <input type="text" name="time"/>
+  <input type="submit" value="play" />
+</form>
+
+{% endblock %}
+

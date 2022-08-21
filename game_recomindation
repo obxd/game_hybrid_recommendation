@@ -1,0 +1,265 @@
+#!/usr/bin/env python
+import math
+import pandas as pd
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity,cosine_distances
+
+# ------------ config ---------------- #
+config = {
+    "suggestionPerPage": 10,
+    "knn_neigbohors": 10,
+    "content_count": 5,
+    "number_of_similar_games": 5,
+}
+# ------------ config ---------------- #
+
+
+class Game(object):
+    next_id = 0
+    def __init__(self, name, image_url,description):
+        self.id = Game.next_id
+        Game.next_id = Game.next_id + 1
+        self.title = name
+        self.image_url = image_url
+        self.description = description
+
+class User(object):
+    next_id = 0
+    def __init__(self, playtime=[]):
+        self.id = User.next_id
+        User.next_id = User.next_id + 1
+        self.playtime = playtime
+
+    def add_time(self, game_index, time):
+        self.playtime[game_index] += time
+
+    def get_vector(self):
+        total_time = sum(self.playtime)
+        if total_time !=0 :
+            return list(map(lambda x:x/total_time, self.playtime))
+        return self.playtime
+
+
+class RecomindationSystem(object):
+    def __init__(self, games, users):
+        self.games = games
+        self.users = users
+        self.need_update_col = True
+        self.need_update_pop = True
+        self.__create_contect_matrix()
+
+    def need_update(self):
+        self.need_update_col = True
+        self.need_update_pop = True
+
+        
+    def mostPopular(self):
+        if self.need_update_pop:
+            games_indexes = [i for i in range(len(self.games))]
+            weights = [0 for _ in range(len(self.games))]
+            for user in self.users:
+                v = user.get_vector()
+                for i in range(len(self.games)):
+                    weights[i] += v[i]
+            games_indexes_weights = list(zip(games_indexes,weights))
+            games_indexes_weights.sort(reverse=True,key=lambda x:x[1])
+            self.popularity = [self.games[i] for i,_ in games_indexes_weights]
+            self.need_update_pop = False
+        return self.popularity
+
+    def __create_rating_matrix(self):
+        mat = []
+        for user in self.users:
+            mat.append(np.array(user.get_vector()))
+        self.rating_matrix = np.array(mat)
+
+    def colaborative(self, user):
+        if self.need_update_col:
+            self.__create_rating_matrix()
+            self.knn = NearestNeighbors(n_neighbors=config["knn_neigbohors"])
+            self.knn.fit(self.rating_matrix)
+            self.need_update_col = False
+        _, [similar_users] = self.knn.kneighbors([user.get_vector()])
+        weights = np.array([0 for _ in range(len(self.games))], dtype= np.dtype('float64'))
+        for i in similar_users:
+            weights += np.array(self.users[i].get_vector())
+
+        sorted_index = np.argsort(weights)[::-1]
+        return list(map(lambda x:self.games[x], sorted_index))
+
+
+    def __create_contect_matrix(self):
+        stop = stopwords.words('english')
+        procesed_desc = []
+        for game in self.games:
+            x = game.description.strip().lower()
+            procesed_desc.append(' '.join([word for word in x.split() if word not in (stop)]))
+        vectorizer = TfidfVectorizer()
+        self.sim_matrix = cosine_similarity(vectorizer.fit_transform(procesed_desc))
+
+    def contentBased(self, user):
+        top_games = self.colaborative(user)[0:config["content_count"]]
+
+        #find similar games:
+        similar_games = []
+        for game in top_games:
+            v = self.sim_matrix[game.id]
+            sorted_index = np.argsort(v)[::-1]
+            for i in range(config["number_of_similar_games"]):
+                similar_games.append(self.games[sorted_index[i+1]])
+        return similar_games 
+
+    def hybrid(self, user):
+        popular = self.mostPopular()
+        cf = self.colaborative(user)
+        cbf = self.contentBased(user)
+        merge = []
+        games = set(self.games)
+        
+        lists = [popular, cf, cbf] 
+        while len(merge) != len(self.games):
+            for l in lists:
+                added = False
+                while l and not added:
+                    to_add = l.pop(0)
+                    if to_add in games:
+                        games.remove(to_add)
+                        merge.append(to_add)
+                        added = True
+
+        return merge
+
+    def get_user(self, user_id):
+        return self.users[int(user_id)]
+
+    def get_game(self, game_id):
+        return self.games[game_id]
+
+    def is_known_user(self, user_str):
+        return user_str.isdigit() and int(user_str) in range(len(self.users))
+
+# ------ Processing the data ---------------------- #
+def process_data():
+    steam_200k = pd.read_csv("./data/dataset2/steam-200k.csv",usecols=[0,1,2,3],
+         names=['user','name','behavior','hoursplayed'])
+
+
+    steam_games_meta_df = pd.read_csv("./data/dataset1/steam.csv")
+    steam_games_description_df = pd.read_csv("./data/dataset1/steam_description_data.csv").rename(columns={"steam_appid":"appid"})
+    steam_games_media = pd.read_csv("./data/dataset1/steam_media_data.csv").rename(columns={"steam_appid":"appid"})
+
+    steam_data = pd.merge(steam_games_meta_df, steam_games_description_df, on="appid")\
+            .loc[:,['appid','name', 'detailed_description']]\
+            .merge(steam_games_media, on='appid')\
+            .loc[:,['appid','name', 'detailed_description', 'header_image']]
+
+
+    playtime = steam_200k.loc[steam_200k["behavior"]=="play"]
+    
+    common_games = set(map(lambda x:x.lower(), playtime['name']))\
+            .intersection(
+                set(map(lambda x:x.lower(), steam_data['name']))
+            )
+
+    final_steam_data = steam_data[steam_data['name'].str.lower().isin(common_games)]
+    final_playtime   = playtime[playtime['name'].str.lower().isin(common_games)]
+
+    games = []
+    game_name_to_id = dict()
+    for row in final_steam_data.iterrows():
+        data = row[1]
+        game = Game(data['name'],data['header_image'],data['detailed_description'])
+        games.append(game)
+        game_name_to_id[str(game.title.lower())] = game.id
+
+
+    number_of_games = len(games)
+
+    # init hitories
+    hist = dict()
+    for user in set(final_playtime['user']):
+        hist[str(user)] = [0 for _ in range(number_of_games)]
+
+    # add time played of each record
+    for row in final_playtime.iterrows():
+        data = row[1]
+        hist[str(data['user'])][game_name_to_id[data['name'].lower()]] = float(data['hoursplayed'])
+
+    # create users
+    users = [] 
+    # create guest user
+    users.append(User(playtime=[0 for _ in range(number_of_games)])) 
+    for record in hist.values():
+        users.append(User(playtime=record))
+
+    return games, users
+
+RS = RecomindationSystem(*process_data())
+
+# ---------------- Flask website ------------------ #
+from flask import Flask, render_template,request,redirect,session
+app = Flask(__name__)
+app.secret_key = "i dont care its not going to be deployed anyway. its for local use only..."
+
+@app.route("/", methods=["GET"])
+def index_route():
+    return render_template("index.html")
+
+@app.route("/select_user", methods=["GET"])
+def select_user_route():
+    if "user" in request.args:
+        if RS.is_known_user(request.args['user']):
+            session['user'] = request.args['user']
+            return redirect("/suggestions/0")
+        elif request.args['user'] == 'guest':
+            session['user'] = '0'
+            return redirect("/suggestions/0")
+        else:
+            msg = "Unknown user"
+    else:
+        msg = ""
+    return render_template("select_user.html", msg=msg)
+
+
+@app.route("/suggestions/<int:page_num>", methods=["GET"])
+def suggestions_route(page_num):
+    user = RS.get_user(session["user"])
+    suggestionPerPage = config["suggestionPerPage"]
+    colaborative = RS.colaborative(user) [page_num * suggestionPerPage : (page_num + 1) * suggestionPerPage]
+    hybrid       = RS.hybrid(user)       [page_num * suggestionPerPage : (page_num + 1) * suggestionPerPage]
+    contentBased = RS.contentBased(user) [page_num * suggestionPerPage : (page_num + 1) * suggestionPerPage]
+    for l in [colaborative, hybrid, contentBased]:
+        while len(l) < config["suggestionPerPage"]:
+            l.append(None)
+
+    suggestions = list(zip(hybrid,colaborative,contentBased))
+
+    max=math.ceil(len(RS.games)/suggestionPerPage)
+
+    return render_template("suggestions.html", page_num=page_num, user=user.id,suggestions=suggestions , max=max)
+
+
+@app.route("/play", methods=["POST"])
+def play_route():
+    game_id = int(request.form.get('game_id'))
+    game = RS.get_game(game_id)
+    return render_template("/play.html",user=session["user"], game=game)
+
+@app.route("/add_time", methods=["POST"])
+def add_time():
+    if  'game_id' in request.form and 'time' in request.form and isinstance(request.form.get('time'), str):
+        game_id = int(request.form.get('game_id'))
+        time = float(request.form.get('time'))
+        if time > 0:
+            user = RS.get_user(session["user"])
+            user.add_time(game_id ,time)
+            RS.need_update()
+    return redirect("/suggestions/0")
+
+# ------------- Main ------------------ #
+if __name__ == "__main__":
+    app.run(debug=True)
+

@@ -1,0 +1,66 @@
+{% extends "header.html" %}
+
+{% block content %}
+
+{% if user == 0 %}
+<h1>Hello guest </h1>
+{% else %}
+<h1>Hello user {{user}} </h1>
+{% endif %}
+
+<table>
+  <tr>
+    <th>Hybrid</th>
+    <th>Colaborative</th>
+    <th>content based</th>
+  </tr>
+
+  {% for sug in suggestions %}
+  <tr>
+    <td>
+      <p>{{sug[0].title}}</p>
+      <img src={{ sug[0].image_url }} alt="image not found">
+      <form action="/play" method="POST">
+        <input type="hidden" name="game_id" value='{{sug[0].id}}'>
+        <input type="submit" value="Play" />
+      </form>
+
+    </td>
+    <td>
+      <p>{{sug[1].title}}</p>
+      <img src={{ sug[1].image_url }} alt="image not found">
+      <form action="/play" method="POST">
+        <input type="hidden" name="game_id" value='{{sug[1].id}}'>
+        <input type="submit" value="Play" />
+      </form>
+
+    </td>
+    <td>
+      <p>{{sug[2].title}}</p>
+      <img src={{ sug[2].image_url }} alt="image not found">
+      <form action="/play" method="POST">
+        <input type="hidden" name="game_id" value='{{sug[2].id}}'>
+        <input type="submit" value="Play" />
+      </form>
+
+    </td>
+  </tr>
+  {% endfor %}
+
+</table>
+
+
+{% if page_num + 1 != max %}
+<form action="/suggestions/{{page_num + 1}}" method="GET">
+  <input type="submit" value="next page" />
+</form>
+{% endif %}
+
+{% if page_num != 0 %}
+<form action="/suggestions/{{page_num - 1}}" method="GET">
+  <input type="submit" value="prev page" />
+</form>
+{% endif %}
+
+{% endblock %}
+
